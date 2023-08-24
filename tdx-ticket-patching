@@ -1,0 +1,116 @@
+#Connects to TeamDynamix API PROD ENVIRONMENT, gets ticket status, patches ticket status
+#Credentials, URLs are different for sandbox/prod
+
+
+import requests
+import json
+import creds
+import pandas as pd
+import time
+
+# FIRST, AUTHORIZATION
+# =================================================
+# ITS API Auth url with scope and grant type included
+auth_url = 'https://gw.api.it.umich.edu/um/oauth2/token?grant_type=client_credentials&scope=tdxticket'
+
+# auth headers appear to be optional, but are here
+auth_headers = {'content-type' : 'application/x-www-form-urlencoded'}
+
+# pass creds in the payload here
+auth_payload = {
+  'client_id': {creds.client_id_prd},
+  'client_secret': {creds.client_secret_prd},
+}
+
+#get the response with the token in it
+ITS_api_auth_token = requests.post(auth_url, headers=auth_headers, data=auth_payload)
+
+# turn the response text into a dictionary 
+json_token = json.loads(ITS_api_auth_token.text)
+
+# prints were used just to verify that meaningful data was returned. Can be commented
+print(ITS_api_auth_token.text)
+print(json_token['access_token'])
+
+
+
+
+# PATCH ONE TICKET
+# =================================================
+appid = [redacted] #Specific to Dental Informatics
+ticketid = [redacted] #Pick a ticket
+ticket_api_url = f"https://gw.api.it.umich.edu/um/it/{appid}/tickets/{ticketid}?notifyNewResponsible=False"
+
+# ticket status ids: closed = 247, resolved = 246
+new_status = 246
+
+# have to send the auth token to get the data back
+headers = {
+    'authorization': "Bearer " + json_token['access_token'],
+    'Content-Type' : "application/json; charset=utf-8"
+}
+
+request_body = [{
+    "op": "replace",
+    "path": "statusid",
+    "value": new_status
+  }]
+
+# Get a ticket info
+def get_one_ticket_status():
+  # the raw response from the get ticket endpoint
+  ticket_raw_return = requests.get(ticket_api_url, headers=headers)
+  # the text of the response turned into json object
+  ticket_data = json.loads(ticket_raw_return.text)
+  print(ticket_data["StatusID"])
+
+def patch_one_ticket_status():
+  # patch URl for tickets
+  patch_url = f"https://gw.api.it.umich.edu/um/it/{appid}/tickets/{ticketid}?notifyNewResponsible=False"
+  # response for the patch action
+  patch_response = requests.patch(patch_url, headers=headers, data=json.dumps(request_body))
+  # print the response text (not required, just for testing)
+  #print(patch_response.text)
+
+# get_one_ticket_status()
+# patch_one_ticket_status()
+# get_one_ticket_status()
+
+
+# BATCH-UPDATING  TICKETS
+# =================================================
+#identify tickets to update
+df = pd.read_excel("C:/Users/jyaser/PycharmProjects/tdx_api_ticket_project/Tickets with Closed status-06-01-2023.xlsx")
+#df.rename(columns = {'ID':'ticketid'}, inplace = True)
+tix_list = df.ID.values.tolist()
+short_list = tix_list[8802:9903]
+
+# Define the batch size and delay in seconds
+batch_size = 50
+delay_seconds = 45
+
+# Iterate through the list in batches
+for i in range(0, len(short_list), batch_size):
+	batch = short_list[i:i + batch_size]  # Get the current batch of IDs
+
+	# Process the batch
+	for idx, item in enumerate(batch):
+		newticketid = item
+		print("Processing ID:", newticketid)
+		#GET TICKET STATUS
+		ticket_raw_return = requests.get(f"https://gw.api.it.umich.edu/um/it/69/tickets/{newticketid}?notifyNewResponsible=False", headers=headers)
+		ticket_data = json.loads(ticket_raw_return.text)
+		print("Initial Status:", ticket_data["StatusID"])
+		#PATCH TICKET STATUS
+		patch_url = f"https://gw.api.it.umich.edu/um/it/{appid}/tickets/{newticketid}/"
+		patch_response = requests.patch(patch_url, headers=headers, data=json.dumps(request_body))
+		#GET TICKET STATUS AGAIN
+		ticket_raw_return = requests.get(f"https://gw.api.it.umich.edu/um/it/69/tickets/{newticketid}?notifyNewResponsible=False",headers=headers)
+		ticket_data = json.loads(ticket_raw_return.text)
+		print("Post-Patch Status:", ticket_data["StatusID"])
+		print("Number:", i, "/", idx)
+
+	# Delay before processing the next batch
+	if i + batch_size < len(short_list):
+		print("Waiting for", delay_seconds, "seconds...")
+		time.sleep(delay_seconds)
